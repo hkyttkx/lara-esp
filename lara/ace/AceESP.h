@@ -63,6 +63,8 @@ typedef struct {
 - (void)listProcessesAsync;
 /// 内核读写自检：验证 kexploit 拿到的原语是否真的可靠
 - (void)diagnoseAsync;
+/// 准备内核偏移：下载/解析 kernelcache（缺失时 lara 所有偏移都是空的）
+- (void)prepareOffsetsAsync;
 
 @end
 

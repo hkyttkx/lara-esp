@@ -563,6 +563,62 @@ static inline uint64_t ace_sym(const char *name) {
     [self log:@"==============================="];
 }
 
+#pragma mark - 内核偏移准备
+
+- (void)prepareOffsetsAsync {
+    dispatch_async(_espQueue, ^{ [self prepareOffsets]; });
+}
+
+- (void)prepareOffsets {
+    [self log:@"========== 准备内核偏移 =========="];
+
+    NSArray<NSString *> *dirs = NSSearchPathForDirectoriesInDomains(
+        NSDocumentDirectory, NSUserDomainMask, YES);
+    NSString *docs = dirs.firstObject;
+    if (!docs) { [self log:@"拿不到 Documents 目录"]; return; }
+
+    NSString *kc = [docs stringByAppendingPathComponent:@"kernelcache"];
+    NSFileManager *fm = [NSFileManager defaultManager];
+    BOOL exists = [fm fileExistsAtPath:kc];
+
+    [self log:@"kernelcache 路径: %@", kc];
+    if (!exists) {
+        [self log:@"状态：❌ 不存在 —— 这就是偏移全空、进程表读不出来的原因"];
+    } else {
+        NSDictionary *attrs = [fm attributesOfItemAtPath:kc error:nil];
+        double mb = [attrs[NSFileSize] doubleValue] / 1048576.0;
+        [self log:@"状态：已存在（%.1f MB）", mb];
+
+        NSFileHandle *h = [NSFileHandle fileHandleForReadingAtPath:kc];
+        NSData *d = [h readDataOfLength:2];
+        [h closeFile];
+        if (d.length == 2) {
+            const uint8_t *b = d.bytes;
+            [self log:@"头部: %02x %02x  %@", b[0], b[1],
+                  (b[0] == 0x30 && b[1] == 0x84) ? @"✅ 有效 im4p" : @"⚠️ 格式可疑"];
+        }
+        if (mb < 1.0) {
+            [self log:@"⚠️ 文件过小，可能是半截下载，先删掉重来"];
+            [fm removeItemAtPath:kc error:nil];
+            [self log:@"已删除，重新下载…"];
+        }
+    }
+
+    [self log:@"调用 dlkcache()（下载 + 解析）…可能需要几分钟"];
+    CFAbsoluteTime t0 = CFAbsoluteTimeGetCurrent();
+    BOOL ok = dlkcache();
+    [self log:@"dlkcache() = %@  耗时 %.1fs", ok ? @"✅ 成功" : @"❌ 失败",
+          CFAbsoluteTimeGetCurrent() - t0];
+
+    if (ok) {
+        [self log:@"偏移已就位。回到上面重新点「启动 ESP」即可"];
+    } else {
+        [self log:@"失败。可能原因：网络不通 / Apple 服务器上找不到匹配固件的 kernelcache"];
+        [self log:@"备选：手动把 kernelcache 放进 lara 的 Documents 目录"];
+    }
+    [self log:@"=================================="];
+}
+
 #pragma mark - Overlay / WebSocket
 
 - (void)startOverlayAsync:(void (^)(BOOL))completion {    dispatch_async(_espQueue, ^{

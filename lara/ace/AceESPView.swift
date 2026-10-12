@@ -72,11 +72,25 @@ struct AceESPView: View {
                     } label: {
                         HStack {
                             Image(systemName: "stethoscope")
-                            Text("内核自检（先点这个）")
+                            Text("① 内核自检")
                             Spacer()
                         }
                         .padding(.vertical, 11).padding(.horizontal, 14)
                         .background(Color.blue.opacity(0.15))
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                    }
+                    .disabled(busy)
+
+                    Button {
+                        AceESP.shared().prepareOffsetsAsync()
+                    } label: {
+                        HStack {
+                            Image(systemName: "arrow.down.circle")
+                            Text("② 准备内核偏移（下载 kernelcache）")
+                            Spacer()
+                        }
+                        .padding(.vertical, 11).padding(.horizontal, 14)
+                        .background(Color.purple.opacity(0.15))
                         .clipShape(RoundedRectangle(cornerRadius: 10))
                     }
                     .disabled(busy)
