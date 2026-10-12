@@ -19,8 +19,11 @@ jobs:
           xcodebuild -version
           sw_vers
 
-      - name: Install ldid and xcpretty
-        run: brew install ldid xcpretty || true
+      - name: Install ldid
+        run: brew install ldid
+
+      - name: Install xcpretty
+        run: brew install xcpretty || true
 
       - name: Build IPA
         run: |
