@@ -9,7 +9,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 enum taboptions {
-    case applying, tweaks, files, logs
+    case applying, tweaks, files, logs, esp
 }
 
 let g_isunsupported: Bool = isunsupported()
@@ -58,6 +58,12 @@ struct lara: App {
                         Image(systemName: "ant.fill")
                     }
                     .tag(taboptions.tweaks)
+                
+                AceESPView()
+                    .tabItem {
+                        Image(systemName: "scope")
+                    }
+                    .tag(taboptions.esp)
                 
                 
                 // i'm gonna strangle you root (the weight of your actions will crush you)

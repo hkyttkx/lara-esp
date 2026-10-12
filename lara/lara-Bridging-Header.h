@@ -21,6 +21,10 @@
 #import "ota.h"
 #import "screentime.h"
 
+// ESP 模块
+#import "ace/AceESP.h"
+#import "ace/AceOverlay.h"
+
 #import <zlib.h>
 
 long findcachedataoff(const char *mgkey);
