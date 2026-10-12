@@ -500,10 +500,68 @@ static inline uint64_t ace_sym(const char *name) {
     }
 }
 
+#pragma mark - 内核自检
+
+- (void)diagnoseAsync {
+    dispatch_async(_espQueue, ^{ [self diagnose]; });
+}
+
+- (void)diagnose {
+    [self log:@"========== 内核自检 =========="];
+
+    if (!ds_is_ready()) {
+        [self log:@"ds_is_ready = NO → kexploit 没跑起来"];
+        return;
+    }
+    [self log:@"ds_is_ready = YES"];
+
+    uint64_t kbase = ds_get_kernel_base();
+    [self log:@"kernel_base = 0x%llx", kbase];
+
+    // 黄金标准：内核 mach_header 的 magic 必须是 0xfeedfacf
+    uint32_t magic = kbase ? ds_kread32(kbase) : 0;
+    [self log:@"magic @ kbase = 0x%x", magic];
+    if (magic == 0xfeedfacf) {
+        [self log:@"  ✅ 内核读正确"];
+    } else {
+        [self log:@"  ❌ 内核读错误（应为 0xfeedfacf）—— 这就是扫不到进程的根因"];
+    }
+
+    uint32_t myPid = (uint32_t)getpid();
+    uint64_t proc = ourproc();
+    [self log:@"ourproc = 0x%llx %@", proc, proc ? @"✅" : @"❌"];
+    if (proc) {
+        uint32_t pid = ds_kread32(proc + PROC_PID_OFFSET);
+        [self log:@"our pid = %u（应为 %u）%@", pid, myPid, pid == myPid ? @"✅" : @"❌"];
+        uint64_t task = taskbyproc(proc);
+        [self log:@"ourtask = 0x%llx %@", task, task ? @"✅" : @"❌"];
+    }
+
+    const char *selfName = getprogname();
+    if (selfName) {
+        uint64_t byName = procbyname(selfName);
+        [self log:@"procbyname(%s) = 0x%llx %@", selfName, byName, byName ? @"✅" : @"❌"];
+    }
+
+    int n = 0;
+    proc_entry_t *list = proclist(NULL, &n);
+    [self log:@"proclist 数量 = %d（正常 200+）%@", n,
+          n > 50 ? @"✅" : @"❌ 链表遍历断了"];
+    if (list) {
+        int show = n < 8 ? n : 8;
+        for (int i = 0; i < show; i++) {
+            [self log:@"  [%d] '%s' pid=%u kaddr=0x%llx",
+                  i, list[i].name, list[i].pid, list[i].kaddr];
+        }
+        free_proclist(list);
+    }
+
+    [self log:@"==============================="];
+}
+
 #pragma mark - Overlay / WebSocket
 
-- (void)startOverlayAsync:(void (^)(BOOL))completion {
-    dispatch_async(_espQueue, ^{
+- (void)startOverlayAsync:(void (^)(BOOL))completion {    dispatch_async(_espQueue, ^{
         BOOL ok = [self startOverlay];
         dispatch_async(dispatch_get_main_queue(), ^{
             if (completion) completion(ok);

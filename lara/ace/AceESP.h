@@ -61,6 +61,8 @@ typedef struct {
 - (NSArray<NSString *> *)listProcesses;
 - (NSArray<NSString *> *)searchProcesses:(NSString *)keyword;
 - (void)listProcessesAsync;
+/// 内核读写自检：验证 kexploit 拿到的原语是否真的可靠
+- (void)diagnoseAsync;
 
 @end
 
