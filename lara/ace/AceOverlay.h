@@ -1,6 +1,10 @@
 //
 //  AceOverlay.h
-//  跨进程 overlay — 在目标进程里建 WKWebView 挂到游戏窗口上
+//  跨进程 overlay —— 在【目标游戏进程】里建 WKWebView
+//
+//  走的样本那套架构：
+//      本 App 进程：读内存 + 算屏幕坐标 + AceWS 广播
+//      游戏进程  ：WKWebView 连 ws://127.0.0.1:PORT → Canvas 画
 //
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
@@ -11,18 +15,22 @@ NS_ASSUME_NONNULL_BEGIN
 
 @interface AceOverlay : NSObject
 
-/// 在目标进程内建好 WKWebView 并挂到游戏 UIWindow
-- (BOOL)installWithRemoteCall:(RemoteCall *)rc logBlock:(nullable void (^)(NSString *))logBlock;
+/// 在目标进程里建 overlay WebView 并挂到游戏窗口。
+/// wsPort 会被注入 HTML，WebView 里用它连回本 App 的 AceWS。
+- (BOOL)installWithRemoteCall:(RemoteCall *)rc
+                       wsPort:(uint16_t)wsPort
+                     logBlock:(nullable void (^)(NSString *))logBlock;
 
-/// 推一帧给 JS。每个元素用 NSString/NSNumber 组成字典
-- (void)pushEntities:(NSArray<NSDictionary *> *)entities;
-
-/// 拆掉 overlay（反复测试必须调用，否则游戏进程内存里会累积窗口）
+/// 拆掉 overlay（反复测试必须调用）
 - (void)uninstall;
 
-@property (nonatomic, readonly) BOOL    installed;
-@property (nonatomic, readonly) CGSize  screenSize;   // 游戏窗口尺寸（横屏宽>高）
-@property (nonatomic, readonly) uint64_t webView;
+/// 额外挂一个 WebView（菜单 / 悬浮按钮），role 对应 HTML 里的角色名
+- (BOOL)attachAuxWebView:(RemoteCall *)rc role:(NSString *)role
+                    html:(NSString *)html logBlock:(nullable void (^)(NSString *))logBlock;
+
+@property (nonatomic, readonly) BOOL      installed;
+@property (nonatomic, readonly) CGSize    screenSize;
+@property (nonatomic, readonly) uint64_t  webView;
 
 @end
 

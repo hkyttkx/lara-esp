@@ -1,13 +1,6 @@
 //
 //  AceESP.h
-//  王牌战争 ESP — 数据层接口
-//
-//  用法：
-//      AceESP *esp = [AceESP shared];
-//      esp.targetProcess = @"AceForce";
-//      if ([esp start]) {
-//          [esp dumpOnce];
-//      }
+//  王牌战争 ESP — 数据层 + overlay
 //
 #import <Foundation/Foundation.h>
 #import <stdint.h>
@@ -17,14 +10,14 @@ NS_ASSUME_NONNULL_BEGIN
 
 /// 一个玩家的快照（纯值类型，可跨线程传递）
 typedef struct {
-    uint64_t controller;        // OtherPlayerController 远程地址
+    uint64_t controller;
     int64_t  roleId;
     int32_t  hp;
     int32_t  hpMax;
-    int32_t  groupId;           // 阵营；与自己相同 = 队友
-    uint8_t  status;            // ACE_ST_* 常量
-    float    x, y, z;           // 世界坐标
-    char     name[64];          // UTF-8
+    int32_t  groupId;
+    uint8_t  status;
+    float    x, y, z;
+    char     name[64];
 } AcePlayer;
 
 @interface AceESP : NSObject
@@ -35,32 +28,38 @@ typedef struct {
 @property (nonatomic, copy)   NSString *targetProcess;
 @property (nonatomic, assign) BOOL      ready;
 @property (nonatomic, assign) BOOL      running;
+@property (nonatomic, assign) BOOL      drawing;      // overlay 是否在跑
 @property (nonatomic, assign) int       lastPlayerCount;
+@property (nonatomic, assign) int       lastTargetCount;   // 本帧推给前端的实体数
 
-/// 日志回调（后台线程调用，UI 侧自行切主线程）
+/// 绘制开关（对应前端 entity.drawXxx）
+@property (nonatomic, assign) BOOL optBox;
+@property (nonatomic, assign) BOOL optLine;
+@property (nonatomic, assign) BOOL optName;
+@property (nonatomic, assign) BOOL optHealth;
+@property (nonatomic, assign) BOOL optDistance;
+
 @property (nonatomic, copy, nullable) void (^logBlock)(NSString *line);
 
 #pragma mark - 生命周期
-/// 完整初始化：内核检查 → 连进程 → 解析 il2cpp → 取 Battle.Ins
-/// ⚠️ 同步版本，会阻塞调用线程数秒到数十秒。只允许在内部串行队列上调用。
+/// 同步初始化（只允许在内部串行队列上调用）
 - (BOOL)start;
-/// 异步启动（内部专用串行队列，绝不阻塞调用线程）。completion 回主线程。
+/// 异步启动。completion 回主线程。
 - (void)startAsync:(void (^)(BOOL ok))completion;
-/// 停止：只清状态，不杀进程
 - (void)stop;
 
-#pragma mark - 数据
-/// 拉一次玩家快照，返回实际写入数量（同步，内部队列用）
-- (int)scanPlayers:(AcePlayer *)outBuf maxCount:(int)maxCount;
-/// 把当前玩家列表打到日志（第一步验证用）
-- (void)dumpOnce;
+/// 开启绘制：启动 WebSocket 服务端 + 在游戏进程建 overlay
+- (void)startOverlayAsync:(void (^)(BOOL ok))completion;
+- (void)stopOverlayAsync;
 
-#pragma mark - 排查工具（只依赖内核，不需要 RemoteCall 成功）
-/// 列出系统进程，返回 "name (pid=N)" 形式的数组
+#pragma mark - 数据
+- (int)scanPlayers:(AcePlayer *)outBuf maxCount:(int)maxCount;
+- (void)dumpOnce;
+- (void)dumpOnceAsync;
+
+#pragma mark - 排查工具
 - (NSArray<NSString *> *)listProcesses;
-/// 按关键词模糊搜索进程名
 - (NSArray<NSString *> *)searchProcesses:(NSString *)keyword;
-/// 异步列进程，结果打到日志（UI 用）
 - (void)listProcessesAsync;
 
 @end

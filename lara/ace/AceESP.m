@@ -9,6 +9,8 @@
 //
 #import "AceESP.h"
 #import "AceOffsets.h"
+#import "AceWS.h"
+#import "AceOverlay.h"
 
 #import "../kexploit/darksword.h"
 #import "../kexploit/utils.h"
@@ -31,6 +33,10 @@ static inline uint64_t ace_sym(const char *name) {
     RemoteCall *_rc;
     uint64_t    _scratch;          // 目标进程内 4KB 暂存区
     dispatch_queue_t _espQueue;    // 串行队列：所有内核/远程调用都在这里
+
+    AceWS      *_ws;
+    AceOverlay *_overlay;
+    dispatch_source_t _renderTimer;
 
     uint64_t    _battleKlass;      // Il2CppClass* (Battle)
     uint64_t    _battle;           // Battle.Ins
@@ -68,6 +74,13 @@ static inline uint64_t ace_sym(const char *name) {
         _espQueue = dispatch_queue_create("com.ace.esp.serial", DISPATCH_QUEUE_SERIAL);
         dispatch_set_target_queue(_espQueue,
             dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0));
+
+        // 绘制开关默认值
+        _optBox = YES;
+        _optLine = YES;
+        _optName = YES;
+        _optHealth = YES;
+        _optDistance = NO;
     }
     return self;
 }
@@ -485,6 +498,129 @@ static inline uint64_t ace_sym(const char *name) {
     if (!found) {
         [self log:@"  没找到相近进程。改用「列出进程」按钮翻一遍完整列表"];
     }
+}
+
+#pragma mark - Overlay / WebSocket
+
+- (void)startOverlayAsync:(void (^)(BOOL))completion {
+    dispatch_async(_espQueue, ^{
+        BOOL ok = [self startOverlay];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (completion) completion(ok);
+        });
+    });
+}
+
+- (BOOL)startOverlay {
+    if (!self.ready || !_rc) { [self log:@"先成功启动 ESP，再开绘制"]; return NO; }
+
+    __weak typeof(self) weakSelf = self;
+
+    // 1) 本机 WebSocket 服务端
+    if (!_ws) _ws = [AceWS new];
+    _ws.onLog = ^(NSString *s) { [weakSelf log:@"%@", s]; };
+    _ws.onMessage = ^(NSString *role, NSDictionary *msg) { [weakSelf handleWS:role msg:msg]; };
+    if (![_ws start]) { [self log:@"WebSocket 启动失败"]; return NO; }
+
+    // 2) 在游戏进程里建 WebView
+    if (!_overlay) _overlay = [AceOverlay new];
+    BOOL ok = [_overlay installWithRemoteCall:_rc
+                                       wsPort:_ws.port
+                                     logBlock:^(NSString *s) { [weakSelf log:@"%@", s]; }];
+    if (!ok) { [self log:@"overlay 安装失败"]; return NO; }
+
+    self.drawing = YES;
+    [self startRenderLoop];
+    [self log:@"绘制已开启，前端连 ws://127.0.0.1:%u", _ws.port];
+    return YES;
+}
+
+- (void)stopOverlayAsync {
+    dispatch_async(_espQueue, ^{ [self stopOverlay]; });
+}
+
+- (void)stopOverlay {
+    [self stopRenderLoop];
+    [_overlay uninstall];
+    _overlay = nil;
+    [_ws stop];
+    _ws = nil;
+    self.drawing = NO;
+    [self log:@"绘制已关闭"];
+}
+
+- (void)handleWS:(NSString *)role msg:(NSDictionary *)msg {
+    NSString *type = msg[@"type"];
+    if ([type isEqualToString:@"viewport"]) {
+        [self log:@"前端上报 viewport %@ x %@", msg[@"width"], msg[@"height"]];
+    }
+}
+
+#pragma mark - 渲染循环
+
+- (void)startRenderLoop {
+    [self stopRenderLoop];
+    // 8Hz —— 每个 worldToScreen 都是一次跨进程调用，频率再高会把目标进程拖死
+    _renderTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, _espQueue);
+    dispatch_source_set_timer(_renderTimer,
+                              dispatch_time(DISPATCH_TIME_NOW, 0),
+                              125ull * NSEC_PER_MSEC,
+                              20ull * NSEC_PER_MSEC);
+    __weak typeof(self) weakSelf = self;
+    dispatch_source_set_event_handler(_renderTimer, ^{ [weakSelf renderFrame]; });
+    dispatch_resume(_renderTimer);
+}
+
+- (void)stopRenderLoop {
+    if (_renderTimer) {
+        dispatch_source_cancel(_renderTimer);
+        _renderTimer = nil;
+    }
+}
+
+- (void)renderFrame {
+    if (!self.drawing || !_overlay || !_overlay.installed || !_ws) return;
+
+    AcePlayer buf[ACE_MAX_PLAYERS];
+    int n = [self scanPlayers:buf maxCount:ACE_MAX_PLAYERS];
+    CGSize sz = _overlay.screenSize;
+    uint64_t cam = [self cameraObject];
+
+    NSMutableArray *targets = [NSMutableArray arrayWithCapacity:(NSUInteger)n];
+    for (int i = 0; i < n; i++) {
+        AcePlayer *p = &buf[i];
+
+        CGPoint sp = CGPointZero;
+        if (cam) sp = [self worldToScreen:cam x:p->x y:p->y z:p->z];
+
+        BOOL onScreen = (sp.x >= 0 && sp.y >= 0 && sp.x <= sz.width && sp.y <= sz.height);
+
+        // 包围盒：固定尺寸起步，后面换成按距离缩放
+        float h = 140.0f;
+        float w = h * 0.45f;
+
+        NSDictionary *e = @{
+            @"visible"      : @YES,
+            @"onScreen"     : @(onScreen),
+            @"sx"           : @(sp.x),
+            @"sy"           : @(sp.y),
+            @"hp"           : @(p->hp),
+            @"maxHp"        : @(p->hpMax > 0 ? p->hpMax : 100),
+            @"name"         : p->name[0] ? [NSString stringWithUTF8String:p->name] : @"",
+            @"distance"     : @0,
+            @"box"          : @{ @"x": @(sp.x - w/2), @"y": @(sp.y - h/2),
+                                 @"w": @(w), @"h": @(h) },
+            @"drawBox"      : @(self.optBox),
+            @"drawLine"     : @(self.optLine),
+            @"drawName"     : @(self.optName),
+            @"drawHealth"   : @(self.optHealth),
+            @"drawDistance" : @(self.optDistance),
+        };
+        [targets addObject:e];
+    }
+
+    [_ws send:@{ @"type": @"targets", @"targets": targets } toRole:@"esp"];
+    self.lastTargetCount = (int)targets.count;
 }
 
 @end
