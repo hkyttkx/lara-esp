@@ -30,6 +30,7 @@ static inline uint64_t ace_sym(const char *name) {
 @implementation AceESP {
     RemoteCall *_rc;
     uint64_t    _scratch;          // 目标进程内 4KB 暂存区
+    dispatch_queue_t _espQueue;    // 串行队列：所有内核/远程调用都在这里
 
     uint64_t    _battleKlass;      // Il2CppClass* (Battle)
     uint64_t    _battle;           // Battle.Ins
@@ -60,9 +61,45 @@ static inline uint64_t ace_sym(const char *name) {
 
 - (instancetype)init {
     if ((self = [super init])) {
-        _targetProcess = @"AceForce";
+        _targetProcess = @"";
+        // 所有内核/远程调用都串行跑在这条队列上。
+        // 绝不能放主线程：RemoteCall 初始化 + il2cpp 符号解析累计十几秒，
+        // 主线程会被 iOS 看门狗直接杀掉。
+        _espQueue = dispatch_queue_create("com.ace.esp.serial", DISPATCH_QUEUE_SERIAL);
+        dispatch_set_target_queue(_espQueue,
+            dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0));
     }
     return self;
+}
+
+#pragma mark - 异步包装
+
+- (void)startAsync:(void (^)(BOOL))completion {
+    dispatch_async(_espQueue, ^{
+        BOOL ok = [self start];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (completion) completion(ok);
+        });
+    });
+}
+
+- (void)dumpOnceAsync {
+    dispatch_async(_espQueue, ^{
+        [self dumpOnce];
+    });
+}
+
+- (void)listProcessesAsync {
+    dispatch_async(_espQueue, ^{
+        NSArray<NSString *> *all = [self listProcesses];
+        if (all.count == 0) {
+            [self log:@"进程列表为空（内核可能没就绪）"];
+            return;
+        }
+        [self log:@"========== 进程列表 (%lu) ==========", (unsigned long)all.count];
+        for (NSString *s in all) [self log:@"  %@", s];
+        [self log:@"========== 结束 =========="];
+    });
 }
 
 #pragma mark - 日志
@@ -104,12 +141,16 @@ static inline uint64_t ace_sym(const char *name) {
         return NO;
     }
 
-    _rc = [[RemoteCall alloc] initWithProcess:_targetProcess useMigFilterBypass:YES];
+    CFAbsoluteTime t0 = CFAbsoluteTimeGetCurrent();
+    _rc = [[RemoteCall alloc] initWithProcess:_targetProcess useMigFilterBypass:NO];
     if (!_rc) {
         [self log:@"连接进程失败：%@", [RemoteCall lastInitError]];
+        [self log:@"注意：这里要填【进程名 / 可执行文件名】，不是 Bundle ID"];
+        [self suggestFor:_targetProcess];
         return NO;
     }
-    [self log:@"已连接进程 %@ (pid=%d)", _targetProcess, _rc.pid];
+    [self log:@"已连接进程 %@ (pid=%d) 耗时 %.1fs",
+          _targetProcess, _rc.pid, CFAbsoluteTimeGetCurrent() - t0];
 
     // 目标进程内申请暂存区
     uint64_t args[1] = { ACE_SCRATCH_SIZE };
@@ -120,16 +161,24 @@ static inline uint64_t ace_sym(const char *name) {
     }
     [self log:@"暂存区 @ 0x%llx", _scratch];
 
+    CFAbsoluteTime t1 = CFAbsoluteTimeGetCurrent();
     if (![self resolveIl2Cpp]) return NO;
+    [self log:@"il2cpp 符号解析完成，耗时 %.1fs", CFAbsoluteTimeGetCurrent() - t1];
+
+    CFAbsoluteTime t2 = CFAbsoluteTimeGetCurrent();
     if (![self resolveBattle]) return NO;
+    [self log:@"Battle 解析完成，耗时 %.1fs", CFAbsoluteTimeGetCurrent() - t2];
 
     // 投影方法拿不到不算致命——没有它 ESP 照样能跑雷达
+    CFAbsoluteTime t3 = CFAbsoluteTimeGetCurrent();
     _hasProjection = [self resolveProjection];
-    [self log:@"投影方法 %@", _hasProjection ? @"已就绪" : @"未就绪（只影响屏幕画框）"];
+    [self log:@"投影方法 %@，耗时 %.1fs",
+          _hasProjection ? @"已就绪" : @"未就绪（只影响屏幕画框）",
+          CFAbsoluteTimeGetCurrent() - t3];
 
     self.ready = YES;
     self.running = YES;
-    [self log:@"初始化完成"];
+    [self log:@"初始化完成，总耗时 %.1fs", CFAbsoluteTimeGetCurrent() - t0];
     return YES;
 }
 
@@ -369,6 +418,72 @@ static inline uint64_t ace_sym(const char *name) {
     }
     if (n == 0) {
         [self log:@"-- 0 个。依次检查：是否在局内 / 进程名 / 偏移是否过期 --"];
+    }
+}
+
+#pragma mark - 排查工具
+
+- (NSArray<NSString *> *)listProcesses {
+    if (!ds_is_ready()) {
+        [self log:@"内核未就绪，列不了进程"];
+        return @[];
+    }
+    int n = 0;
+    proc_entry_t *list = proclist(NULL, &n);
+    if (!list) {
+        [self log:@"proclist 返回空（内核读写可能有问题）"];
+        return @[];
+    }
+    NSMutableArray *out = [NSMutableArray arrayWithCapacity:(NSUInteger)n];
+    for (int i = 0; i < n; i++) {
+        char nm[33] = {0};
+        memcpy(nm, list[i].name, 32);
+        [out addObject:[NSString stringWithFormat:@"%s (pid=%u)", nm, list[i].pid]];
+    }
+    free_proclist(list);
+    [self log:@"共 %d 个进程", n];
+    return out;
+}
+
+- (NSArray<NSString *> *)searchProcesses:(NSString *)keyword {
+    if (!ds_is_ready() || keyword.length == 0) return @[];
+    int n = 0;
+    proc_entry_t *list = proclist(keyword.UTF8String, &n);
+    if (!list) return @[];
+    NSMutableArray *out = [NSMutableArray arrayWithCapacity:(NSUInteger)n];
+    for (int i = 0; i < n; i++) {
+        char nm[33] = {0};
+        memcpy(nm, list[i].name, 32);
+        [out addObject:[NSString stringWithFormat:@"%s (pid=%u)", nm, list[i].pid]];
+    }
+    free_proclist(list);
+    return out;
+}
+
+/// 用户填错名字时，从输入里猜关键词，去进程表里找相近的
+- (void)suggestFor:(NSString *)input {
+    [self log:@"正在按关键词搜索进程…"];
+
+    NSMutableArray<NSString *> *keys = [NSMutableArray array];
+    for (NSString *seg in [input componentsSeparatedByString:@"."]) {
+        if (seg.length >= 3) [keys addObject:seg];
+    }
+    // 也用完整输入试一次
+    if (input.length >= 3) [keys addObject:input];
+
+    NSMutableSet<NSString *> *seen = [NSMutableSet set];
+    BOOL found = NO;
+    for (NSString *k in keys) {
+        for (NSString *hit in [self searchProcesses:k]) {
+            if ([seen containsObject:hit]) continue;
+            [seen addObject:hit];
+            [self log:@"  命中[%@] → %@", k, hit];
+            found = YES;
+        }
+    }
+
+    if (!found) {
+        [self log:@"  没找到相近进程。改用「列出进程」按钮翻一遍完整列表"];
     }
 }
 
