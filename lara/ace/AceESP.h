@@ -42,15 +42,26 @@ typedef struct {
 
 #pragma mark - 生命周期
 /// 完整初始化：内核检查 → 连进程 → 解析 il2cpp → 取 Battle.Ins
+/// ⚠️ 同步版本，会阻塞调用线程数秒到数十秒。只允许在内部串行队列上调用。
 - (BOOL)start;
+/// 异步启动（内部专用串行队列，绝不阻塞调用线程）。completion 回主线程。
+- (void)startAsync:(void (^)(BOOL ok))completion;
 /// 停止：只清状态，不杀进程
 - (void)stop;
 
 #pragma mark - 数据
-/// 拉一次玩家快照，返回实际写入数量
+/// 拉一次玩家快照，返回实际写入数量（同步，内部队列用）
 - (int)scanPlayers:(AcePlayer *)outBuf maxCount:(int)maxCount;
 /// 把当前玩家列表打到日志（第一步验证用）
 - (void)dumpOnce;
+
+#pragma mark - 排查工具（只依赖内核，不需要 RemoteCall 成功）
+/// 列出系统进程，返回 "name (pid=N)" 形式的数组
+- (NSArray<NSString *> *)listProcesses;
+/// 按关键词模糊搜索进程名
+- (NSArray<NSString *> *)searchProcesses:(NSString *)keyword;
+/// 异步列进程，结果打到日志（UI 用）
+- (void)listProcessesAsync;
 
 @end
 
