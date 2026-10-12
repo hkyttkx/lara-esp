@@ -156,6 +156,23 @@ static inline uint64_t ace_sym(const char *name) {
     }
 
     CFAbsoluteTime t0 = CFAbsoluteTimeGetCurrent();
+
+    // 先用 procbyname 验证目标进程真的存在。
+    // 注意：proclist() 在某些固件上不可靠（allproc 起点是坏的），
+    // 但 procbyname() 走 kernproc 链，是可信的。
+    if (_targetProcess.length == 0) {
+        [self log:@"目标进程名为空"];
+        return NO;
+    }
+    uint64_t targetProc = procbyname(_targetProcess.UTF8String);
+    if (!targetProc) {
+        [self log:@"procbyname('%@') 没找到 → 进程名不对，或游戏没在跑", _targetProcess];
+        [self log:@"提示：进程名是可执行文件名，不是 Bundle ID。用列表按钮查"];
+        [self suggestFor:_targetProcess];
+        return NO;
+    }
+    [self log:@"procbyname('%@') = 0x%llx ✅ 进程存在", _targetProcess, targetProc];
+
     _rc = [[RemoteCall alloc] initWithProcess:_targetProcess useMigFilterBypass:NO];
     if (!_rc) {
         [self log:@"连接进程失败：%@", [RemoteCall lastInitError]];
