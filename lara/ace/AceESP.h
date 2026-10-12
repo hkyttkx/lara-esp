@@ -65,6 +65,8 @@ typedef struct {
 - (void)diagnoseAsync;
 /// 准备内核偏移：下载/解析 kernelcache（缺失时 lara 所有偏移都是空的）
 - (void)prepareOffsetsAsync;
+/// 对照测试：连接 SpringBoard（系统进程）。用来区分"RemoteCall 本身坏"还是"目标进程有问题"
+- (void)testSpringBoardAsync;
 
 @end
 

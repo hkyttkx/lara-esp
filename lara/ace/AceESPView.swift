@@ -95,6 +95,20 @@ struct AceESPView: View {
                     }
                     .disabled(busy)
 
+                    Button {
+                        AceESP.shared().testSpringBoardAsync()
+                    } label: {
+                        HStack {
+                            Image(systemName: "arrow.triangle.2.circlepath")
+                            Text("③ 对照测试：连接 SpringBoard")
+                            Spacer()
+                        }
+                        .padding(.vertical, 11).padding(.horizontal, 14)
+                        .background(Color.teal.opacity(0.15))
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                    }
+                    .disabled(busy)
+
                     // ---- 绘制 ----
                     sectionTitle("绘制")
                     Button {

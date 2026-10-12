@@ -180,6 +180,15 @@ static inline uint64_t ace_sym(const char *name) {
         [self suggestFor:_targetProcess];
         return NO;
     }
+    // DarkSpeed 同款校验：初始化返回非 nil 不代表可用
+    if (!_rc.trojanMem || _rc.pid <= 1) {
+        [self log:@"⚠️ RemoteCall 返回了对象但不可用：trojanMem=0x%llx pid=%d",
+              _rc.trojanMem, _rc.pid];
+        [self log:@"   这通常意味着内核原语或线程注入没真正建立"];
+        [_rc destroyRemoteCall];
+        _rc = nil;
+        return NO;
+    }
     [self log:@"已连接进程 %@ (pid=%d) 耗时 %.1fs",
           _targetProcess, _rc.pid, CFAbsoluteTimeGetCurrent() - t0];
 
@@ -634,6 +643,41 @@ static inline uint64_t ace_sym(const char *name) {
         [self log:@"备选：手动把 kernelcache 放进 lara 的 Documents 目录"];
     }
     [self log:@"=================================="];
+}
+
+#pragma mark - SpringBoard 对照测试
+
+- (void)testSpringBoardAsync {
+    dispatch_async(_espQueue, ^{ [self testSpringBoard]; });
+}
+
+/// DarkSpeed 就是连 SpringBoard 的（而且它工作正常），所以这里当基准对照：
+/// 如果 SpringBoard 能连、目标游戏不能 → 问题是游戏进程本身（保护/特性）
+/// 如果 SpringBoard 也连不上 → 问题是 RemoteCall 或内核原语
+- (void)testSpringBoard {
+    [self log:@"===== SpringBoard 对照测试 ====="];
+
+    if (!ds_is_ready()) {
+        [self log:@"内核未就绪"];
+        return;
+    }
+
+    uint64_t p = procbyname("SpringBoard");
+    [self log:@"procbyname('SpringBoard') = 0x%llx %@", p, p ? @"✅" : @"❌"];
+    if (!p) return;
+
+    RemoteCall *rc = [[RemoteCall alloc] initWithProcess:@"SpringBoard"
+                                       useMigFilterBypass:NO];
+    if (!rc) {
+        [self log:@"❌ 连接失败：%@", [RemoteCall lastInitError]];
+        [self log:@"→ RemoteCall 本身有问题，不是游戏的事"];
+        return;
+    }
+    [self log:@"✅ 连上了！pid=%d trojanMem=0x%llx", rc.pid, rc.trojanMem];
+    [self log:@"→ RemoteCall 可用，问题在目标游戏进程"];
+
+    [rc destroyRemoteCall];
+    [self log:@"==============================="];
 }
 
 #pragma mark - Overlay / WebSocket
