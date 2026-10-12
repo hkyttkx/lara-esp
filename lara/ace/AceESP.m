@@ -531,8 +531,11 @@ static inline uint64_t ace_sym(const char *name) {
     uint64_t proc = ourproc();
     [self log:@"ourproc = 0x%llx %@", proc, proc ? @"✅" : @"❌"];
     if (proc) {
-        uint32_t pid = ds_kread32(proc + PROC_PID_OFFSET);
-        [self log:@"our pid = %u（应为 %u）%@", pid, myPid, pid == myPid ? @"✅" : @"❌"];
+        // PROC_PID_OFFSET 只定义在 utils.m 内部，这里用 offsets.h 导出的值
+        uint32_t pidOff = off_proc_p_pid ? off_proc_p_pid : 0x60;
+        uint32_t pid = ds_kread32(proc + pidOff);
+        [self log:@"our pid = %u（应为 %u，偏移 0x%x）%@",
+              pid, myPid, pidOff, pid == myPid ? @"✅" : @"❌"];
         uint64_t task = taskbyproc(proc);
         [self log:@"ourtask = 0x%llx %@", task, task ? @"✅" : @"❌"];
     }
