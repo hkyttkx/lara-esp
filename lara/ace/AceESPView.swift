@@ -109,6 +109,20 @@ struct AceESPView: View {
                     }
                     .disabled(busy)
 
+                    Button {
+                        AceESP.shared().diagnosePACAsync()
+                    } label: {
+                        HStack {
+                            Image(systemName: "lock.shield")
+                            Text("④ PAC 诊断（查 pc=0x201 的根因）")
+                            Spacer()
+                        }
+                        .padding(.vertical, 11).padding(.horizontal, 14)
+                        .background(Color.orange.opacity(0.15))
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                    }
+                    .disabled(busy)
+
                     // ---- 绘制 ----
                     sectionTitle("绘制")
                     Button {

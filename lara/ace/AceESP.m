@@ -16,6 +16,7 @@
 #import "../kexploit/offsets.h"
 #import "../kexploit/utils.h"
 #import "../kexploit/TaskRop/RemoteCall.h"
+#import "../kexploit/TaskRop/pac.h"
 
 #import <dlfcn.h>
 #import <string.h>
@@ -585,6 +586,38 @@ static inline uint64_t ace_sym(const char *name) {
         }
         free_proclist(list);
     }
+
+    [self log:@"==============================="];
+}
+
+#pragma mark - PAC 诊断
+
+/// 线程注入失败（Remote call faulted at getpid entry pc=0x201）的直接原因排查：
+/// signState 里 remotepac 签名失败会退回未签名 PC，PC 就停在 0x201 这个 trap 值上。
+/// remotepac 依赖 findpacia() 找到 pacia gadget，而 findpacia 又依赖一个写死的
+/// Swift 符号 "$sSwySWSnySiGciM" —— 那个符号在不同 iOS 版本上不保证存在。
+- (void)diagnosePACAsync {
+    dispatch_async(_espQueue, ^{ [self diagnosePAC]; });
+}
+
+- (void)diagnosePAC {
+    [self log:@"========== PAC 诊断 =========="];
+
+    [self log:@"is_pac_supported = %@", is_pac_supported() ? @"YES" : @"NO"];
+    [self log:@"pacsignworks()   = %@", pacsignworks() ? @"YES" : @"NO"];
+
+    void *pacSym = dlsym(RTLD_DEFAULT, "$sSwySWSnySiGciM");
+    if (pacSym) {
+        [self log:@"dlsym($sSwySWSnySiGciM) = %p ✅ 存在", pacSym];
+    } else {
+        [self log:@"dlsym($sSwySWSnySiGciM) = NULL ❌"];
+        [self log:@"  → findpacia() 必然返回 0，remotepac() 必然返回 -1"];
+        [self log:@"  → 线程注入必然失败，PC 停在 0x201"];
+        [self log:@"  这就是根因，与游戏、进程名、权限都无关"];
+    }
+
+    uint64_t gadget = findpacia();
+    [self log:@"findpacia() = 0x%llx %@", gadget, gadget ? @"✅ gadget 可用" : @"❌ gadget 没找到"];
 
     [self log:@"==============================="];
 }

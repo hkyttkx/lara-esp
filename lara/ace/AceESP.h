@@ -67,6 +67,8 @@ typedef struct {
 - (void)prepareOffsetsAsync;
 /// 对照测试：连接 SpringBoard（系统进程）。用来区分"RemoteCall 本身坏"还是"目标进程有问题"
 - (void)testSpringBoardAsync;
+/// PAC 诊断：检查 pacia gadget 是否找得到（线程注入失败的直接原因）
+- (void)diagnosePACAsync;
 
 @end
 
