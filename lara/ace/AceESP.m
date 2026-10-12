@@ -13,6 +13,7 @@
 #import "AceOverlay.h"
 
 #import "../kexploit/darksword.h"
+#import "../kexploit/offsets.h"
 #import "../kexploit/utils.h"
 #import "../kexploit/TaskRop/RemoteCall.h"
 
