@@ -21,7 +21,7 @@
 #import <dlfcn.h>
 #import <string.h>
 #import <stdarg.h>
-#import <mach/mach_vm.h>
+#import <mach/vm_map.h>
 #import <mach/mach_error.h>
 
 // Darwin 上 RTLD_DEFAULT 的特殊取值
@@ -674,35 +674,33 @@ static inline uint64_t ace_sym(const char *name) {
 
     [self log:@"✅ 拿到 task port = %u", port];
 
-    // 3) 试读它的内存：从模块基址附近读 16 字节
+    // 3) 试读它的内存（iOS 用 vm_region_64 / vm_read_overwrite，没有 mach_vm_*）
     vm_map_t vmMap = port;
-    mach_vm_address_t addr = 0x100000000ULL;
-    mach_vm_size_t outSize = 0;
-    uint64_t buf[2] = {0};
-
-    // 先用 region 查询找一个可读区域
-    mach_vm_address_t regionAddr = 0;
-    mach_vm_size_t regionSize = 0;
+    vm_address_t regionAddr = 0;
+    vm_size_t regionSize = 0;
     vm_region_basic_info_data_64_t info;
     mach_msg_type_number_t infoCnt = VM_REGION_BASIC_INFO_COUNT_64;
     mach_port_t objName = MACH_PORT_NULL;
 
-    kr = mach_vm_region(vmMap, &regionAddr, &regionSize,
-                        VM_REGION_BASIC_INFO_64,
-                        (vm_region_info_t)&info, &infoCnt, &objName);
-    [self log:@"mach_vm_region → kr=%d addr=0x%llx size=%.1fMB prot=%d",
-          kr, (unsigned long long)regionAddr,
+    kr = vm_region_64(vmMap, &regionAddr, &regionSize,
+                      VM_REGION_BASIC_INFO_64,
+                      (vm_region_info_t)&info, &infoCnt, &objName);
+    [self log:@"vm_region_64 → kr=%d(%s) addr=0x%llx size=%.1fMB prot=%d",
+          kr, mach_error_string(kr),
+          (unsigned long long)regionAddr,
           (double)regionSize / 1048576.0, info.protection];
 
     if (kr == KERN_SUCCESS) {
-        kr = mach_vm_read_overwrite(vmMap, regionAddr, 16,
-                                    (mach_vm_address_t)buf, &outSize);
-        [self log:@"mach_vm_read_overwrite(0x%llx) → kr=%d(%s) got=%llu",
+        uint64_t buf[2] = {0};
+        vm_size_t got = 0;
+        kr = vm_read_overwrite(vmMap, regionAddr, 16,
+                               (vm_address_t)buf, &got);
+        [self log:@"vm_read_overwrite(0x%llx) → kr=%d(%s) got=%llu",
               (unsigned long long)regionAddr, kr, mach_error_string(kr),
-              (unsigned long long)outSize];
+              (unsigned long long)got];
         if (kr == KERN_SUCCESS) {
             [self log:@"   前 16 字节: %016llx %016llx", buf[0], buf[1]];
-            [self log:@"🎉 可以直接读目标进程内存 —— 不需要页表遍历"];
+            [self log:@"🎉 能直接读目标进程内存 —— 不需要页表遍历"];
         }
     }
 
