@@ -73,6 +73,9 @@ typedef struct {
 - (void)testInjectSelfAsync;
 /// 挂起状态诊断：对比前台/后台进程的 task 结构，定位 suspend_count
 - (void)diagnoseSuspendAsync;
+/// 用内核写清零 suspend_count / user_stop_count，把后台进程唤醒
+- (void)wakeTargetAsync;
+- (void)restoreSuspendAsync;
 
 @end
 

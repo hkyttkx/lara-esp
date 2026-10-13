@@ -40,6 +40,11 @@ static inline uint64_t ace_sym(const char *name) {
     AceOverlay *_overlay;
     dispatch_source_t _renderTimer;
 
+    // 唤醒操作的备份
+    uint64_t _wakeBackupTask;
+    uint32_t _savedSuspend;
+    uint32_t _savedUserStop;
+
     uint64_t    _battleKlass;      // Il2CppClass* (Battle)
     uint64_t    _battle;           // Battle.Ins
 
@@ -628,6 +633,73 @@ static inline uint64_t ace_sym(const char *name) {
     [self log:@"→ 前台活跃进程可注入。游戏失败因此指向「后台被挂起」"];
     [rc destroyRemoteCall];
     [self log:@"=========================================="];
+}
+
+#pragma mark - 唤醒被挂起的进程
+
+- (void)wakeTargetAsync {
+    dispatch_async(_espQueue, ^{ [self wakeTarget]; });
+}
+
+/// 用内核写把目标进程的 suspend_count / user_stop_count 清零。
+/// 依据：前台进程(lara)两字段为 0，后台进程(sc)两字段为 1、相邻同值，
+/// 与 xnu task 里 suspend_count + user_stop_count 这一对的布局吻合。
+/// ⚠️ 这会直接改内核内存。只写两个 4 字节计数器，写前备份好原值。
+- (void)wakeTarget {
+    [self log:@"===== 唤醒目标进程 ====="];
+    if (!ds_is_ready()) { [self log:@"内核未就绪"]; return; }
+    if (_targetProcess.length == 0) { [self log:@"目标进程名为空"]; return; }
+
+    uint64_t proc = procbyname(_targetProcess.UTF8String);
+    if (!proc) { [self log:@"找不到进程 %@", _targetProcess]; return; }
+    uint64_t task = taskbyproc(proc);
+    if (!task) { [self log:@"拿不到 task"]; return; }
+    [self log:@"%@ proc=0x%llx task=0x%llx", _targetProcess, proc, task];
+
+    const uint32_t kSuspendOff = 0x088;
+    const uint32_t kUserStopOff = 0x08c;
+
+    uint32_t s0 = ds_kread32(task + kSuspendOff);
+    uint32_t u0 = ds_kread32(task + kUserStopOff);
+    [self log:@"写前: suspend(+0x%x)=%u  user_stop(+0x%x)=%u",
+          kSuspendOff, s0, kUserStopOff, u0];
+
+    if (s0 == 0 && u0 == 0) {
+        [self log:@"两个计数已经是 0 —— 进程本来就没被挂起"];
+        [self log:@"那注入失败的原因就不是挂起，得另找方向"];
+        return;
+    }
+
+    _savedSuspend = s0;
+    _savedUserStop = u0;
+    _wakeBackupTask = task;
+
+    ds_kwrite32(task + kSuspendOff, 0);
+    ds_kwrite32(task + kUserStopOff, 0);
+
+    uint32_t s1 = ds_kread32(task + kSuspendOff);
+    uint32_t u1 = ds_kread32(task + kUserStopOff);
+    [self log:@"写后: suspend=%u  user_stop=%u %@",
+          s1, u1, (s1 == 0 && u1 == 0) ? @"✅ 已清零" : @"⚠️ 没写进去"];
+
+    if (s1 == 0 && u1 == 0) {
+        [self log:@"现在立刻去点「启动 ESP」——趁进程还醒着"];
+    }
+    [self log:@"（若结果不对，点「恢复挂起」写回原值）"];
+    [self log:@"==============================="];
+}
+
+- (void)restoreSuspendAsync {
+    dispatch_async(_espQueue, ^{ [self restoreSuspend]; });
+}
+
+- (void)restoreSuspend {
+    if (!_wakeBackupTask) { [self log:@"没有备份可恢复"]; return; }
+    ds_kwrite32(_wakeBackupTask + 0x088, _savedSuspend);
+    ds_kwrite32(_wakeBackupTask + 0x08c, _savedUserStop);
+    [self log:@"已恢复: suspend=%u user_stop=%u",
+          ds_kread32(_wakeBackupTask + 0x088), ds_kread32(_wakeBackupTask + 0x08c)];
+    _wakeBackupTask = 0;
 }
 
 #pragma mark - 挂起状态诊断

@@ -151,6 +151,32 @@ struct AceESPView: View {
                     }
                     .disabled(busy)
 
+                    HStack(spacing: 10) {
+                        Button {
+                            AceESP.shared().wakeTargetAsync()
+                        } label: {
+                            HStack {
+                                Image(systemName: "bolt.fill")
+                                Text("⑦ 唤醒进程（改内核）")
+                                Spacer()
+                            }
+                            .padding(.vertical, 12).padding(.horizontal, 14)
+                            .background(Color.red.opacity(0.2))
+                            .clipShape(RoundedRectangle(cornerRadius: 10))
+                        }
+                        .disabled(busy)
+
+                        Button {
+                            AceESP.shared().restoreSuspendAsync()
+                        } label: {
+                            Image(systemName: "arrow.uturn.backward")
+                                .padding(.vertical, 12).padding(.horizontal, 16)
+                                .background(Color.secondary.opacity(0.18))
+                                .clipShape(RoundedRectangle(cornerRadius: 10))
+                        }
+                        .disabled(busy)
+                    }
+
                     // ---- 绘制 ----
                     sectionTitle("绘制")
                     Button {
