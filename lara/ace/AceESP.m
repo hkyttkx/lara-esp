@@ -590,6 +590,46 @@ static inline uint64_t ace_sym(const char *name) {
     [self log:@"==============================="];
 }
 
+#pragma mark - 注入对照测试
+
+- (void)testInjectSelfAsync {
+    dispatch_async(_espQueue, ^{ [self testInjectSelf]; });
+}
+
+/// 判断"游戏注入失败"是不是因为进程被挂起：
+/// lara 自己此刻在前台、线程活跃 —— 如果它也不能注入，说明不是挂起问题；
+/// 如果能注入，就把「活跃 = 可注入 / 后台挂起 = 不可注入」这条规律钉死。
+- (void)testInjectSelf {
+    [self log:@"===== 注入对照：lara 自己（前台活跃）====="];
+
+    if (!ds_is_ready()) { [self log:@"内核未就绪"]; return; }
+
+    const char *selfName = getprogname();
+    [self log:@"本进程名 = %s (pid=%d)", selfName ?: "?", getpid()];
+
+    uint64_t p = procbyname(selfName);
+    [self log:@"procbyname('%s') = 0x%llx %@", selfName, p, p ? @"✅" : @"❌"];
+    if (!p) return;
+
+    RemoteCall *rc = [[RemoteCall alloc] initWithProcess:[NSString stringWithUTF8String:selfName]
+                                       useMigFilterBypass:NO];
+    if (!rc) {
+        [self log:@"❌ 连自己都失败：%@", [RemoteCall lastInitError]];
+        [self log:@"→ 说明不是「后台挂起」，是更底层的问题"];
+        return;
+    }
+    if (!rc.trojanMem || rc.pid <= 1) {
+        [self log:@"❌ 返回对象但不可用 trojanMem=0x%llx pid=%d", rc.trojanMem, rc.pid];
+        [rc destroyRemoteCall];
+        return;
+    }
+
+    [self log:@"✅ 注入自己成功 pid=%d trojanMem=0x%llx", rc.pid, rc.trojanMem];
+    [self log:@"→ 前台活跃进程可注入。游戏失败因此指向「后台被挂起」"];
+    [rc destroyRemoteCall];
+    [self log:@"=========================================="];
+}
+
 #pragma mark - PAC 诊断
 
 /// 线程注入失败（Remote call faulted at getpid entry pc=0x201）的直接原因排查：

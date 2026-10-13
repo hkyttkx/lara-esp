@@ -69,6 +69,8 @@ typedef struct {
 - (void)testSpringBoardAsync;
 /// PAC 诊断：检查 pacia gadget 是否找得到（线程注入失败的直接原因）
 - (void)diagnosePACAsync;
+/// 注入对照：连接 lara 自己（前台活跃进程）
+- (void)testInjectSelfAsync;
 
 @end
 

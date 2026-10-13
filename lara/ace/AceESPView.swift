@@ -123,6 +123,20 @@ struct AceESPView: View {
                     }
                     .disabled(busy)
 
+                    Button {
+                        AceESP.shared().testInjectSelfAsync()
+                    } label: {
+                        HStack {
+                            Image(systemName: "person.crop.circle")
+                            Text("⑤ 注入对照：连接 lara 自己")
+                            Spacer()
+                        }
+                        .padding(.vertical, 11).padding(.horizontal, 14)
+                        .background(Color.indigo.opacity(0.15))
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                    }
+                    .disabled(busy)
+
                     // ---- 绘制 ----
                     sectionTitle("绘制")
                     Button {
