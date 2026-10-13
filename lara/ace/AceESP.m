@@ -21,6 +21,8 @@
 #import <dlfcn.h>
 #import <string.h>
 #import <stdarg.h>
+#import <mach/mach_vm.h>
+#import <mach/mach_error.h>
 
 // Darwin 上 RTLD_DEFAULT 的特殊取值
 #ifndef RTLD_DEFAULT
