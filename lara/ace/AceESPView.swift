@@ -153,6 +153,22 @@ struct AceESPView: View {
 
                     HStack(spacing: 10) {
                         Button {
+                            AceESP.shared().testTaskForPidAsync()
+                        } label: {
+                            HStack {
+                                Image(systemName: "key.horizontal")
+                                Text("⑧ 测 task_for_pid（通了就免页表）")
+                                Spacer()
+                            }
+                            .padding(.vertical, 12).padding(.horizontal, 14)
+                            .background(Color.mint.opacity(0.2))
+                            .clipShape(RoundedRectangle(cornerRadius: 10))
+                        }
+                        .disabled(busy)
+                    }
+
+                    HStack(spacing: 10) {
+                        Button {
                             AceESP.shared().wakeTargetAsync()
                         } label: {
                             HStack {

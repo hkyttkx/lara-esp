@@ -76,6 +76,8 @@ typedef struct {
 /// 用内核写清零 suspend_count / user_stop_count，把后台进程唤醒
 - (void)wakeTargetAsync;
 - (void)restoreSuspendAsync;
+/// 测 task_for_pid：若能拿到 task port，就直接用 mach_vm_read 读内存（免页表遍历）
+- (void)testTaskForPidAsync;
 
 @end
 

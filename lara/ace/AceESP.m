@@ -635,6 +635,79 @@ static inline uint64_t ace_sym(const char *name) {
     [self log:@"=========================================="];
 }
 
+#pragma mark - task_for_pid 可行性测试
+
+- (void)testTaskForPidAsync {
+    dispatch_async(_espQueue, ^{ [self testTaskForPid]; });
+}
+
+/// 如果这条通，就完全不需要页表遍历：
+/// 拿到目标 task port → mach_vm_read_overwrite 直接读它的用户态内存。
+/// lara 的 entitlements 有 platform-application + no-sandbox，正好是 task_for_pid 需要的。
+- (void)testTaskForPid {
+    [self log:@"===== task_for_pid 可行性测试 ====="];
+    if (!ds_is_ready()) { [self log:@"内核未就绪"]; return; }
+    if (_targetProcess.length == 0) { [self log:@"目标进程名为空"]; return; }
+
+    // 1) 先用内核读拿 pid
+    uint64_t proc = procbyname(_targetProcess.UTF8String);
+    if (!proc) { [self log:@"找不到进程 %@", _targetProcess]; return; }
+    uint32_t pidOff = off_proc_p_pid ? off_proc_p_pid : 0x60;
+    uint32_t pid = ds_kread32(proc + pidOff);
+    [self log:@"%@ proc=0x%llx  pid=%u (自主进程 pid=%d)", _targetProcess, proc, pid, getpid()];
+
+    if (pid == 0 || pid == getpid()) { [self log:@"pid 异常，放弃"]; return; }
+
+    // 2) 试 task_for_pid
+    mach_port_t port = MACH_PORT_NULL;
+    kern_return_t kr = task_for_pid(mach_task_self(), (int)pid, &port);
+    [self log:@"task_for_pid(%u) → kr=%d (%s) port=%u",
+          pid, kr, mach_error_string(kr), port];
+
+    if (kr != KERN_SUCCESS || !port) {
+        [self log:@"❌ 拿不到 task port → 这条路不通，只能走页表遍历"];
+        [self log:@"   （或改注入 SpringBoard，用它的权限去 task_for_pid）"];
+        return;
+    }
+
+    [self log:@"✅ 拿到 task port = %u", port];
+
+    // 3) 试读它的内存：从模块基址附近读 16 字节
+    vm_map_t vmMap = port;
+    mach_vm_address_t addr = 0x100000000ULL;
+    mach_vm_size_t outSize = 0;
+    uint64_t buf[2] = {0};
+
+    // 先用 region 查询找一个可读区域
+    mach_vm_address_t regionAddr = 0;
+    mach_vm_size_t regionSize = 0;
+    vm_region_basic_info_data_64_t info;
+    mach_msg_type_number_t infoCnt = VM_REGION_BASIC_INFO_COUNT_64;
+    mach_port_t objName = MACH_PORT_NULL;
+
+    kr = mach_vm_region(vmMap, &regionAddr, &regionSize,
+                        VM_REGION_BASIC_INFO_64,
+                        (vm_region_info_t)&info, &infoCnt, &objName);
+    [self log:@"mach_vm_region → kr=%d addr=0x%llx size=%.1fMB prot=%d",
+          kr, (unsigned long long)regionAddr,
+          (double)regionSize / 1048576.0, info.protection];
+
+    if (kr == KERN_SUCCESS) {
+        kr = mach_vm_read_overwrite(vmMap, regionAddr, 16,
+                                    (mach_vm_address_t)buf, &outSize);
+        [self log:@"mach_vm_read_overwrite(0x%llx) → kr=%d(%s) got=%llu",
+              (unsigned long long)regionAddr, kr, mach_error_string(kr),
+              (unsigned long long)outSize];
+        if (kr == KERN_SUCCESS) {
+            [self log:@"   前 16 字节: %016llx %016llx", buf[0], buf[1]];
+            [self log:@"🎉 可以直接读目标进程内存 —— 不需要页表遍历"];
+        }
+    }
+
+    mach_port_deallocate(mach_task_self(), port);
+    [self log:@"================================="];
+}
+
 #pragma mark - 唤醒被挂起的进程
 
 - (void)wakeTargetAsync {
