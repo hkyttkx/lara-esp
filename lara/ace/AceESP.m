@@ -630,6 +630,45 @@ static inline uint64_t ace_sym(const char *name) {
     [self log:@"=========================================="];
 }
 
+#pragma mark - 挂起状态诊断
+
+- (void)diagnoseSuspendAsync {
+    dispatch_async(_espQueue, ^{ [self diagnoseSuspend]; });
+}
+
+/// 只读扫一遍：比较 lara（前台）和游戏（后台）的 task 结构，
+/// 找出值很小的、且两者不同的整数 —— suspend_count 就在这些候选里。
+/// ⚠️ 这里不写内存，只做定位。
+- (void)diagnoseSuspend {
+    [self log:@"===== 挂起状态诊断 ====="];
+    if (!ds_is_ready()) { [self log:@"内核未就绪"]; return; }
+
+    uint64_t selfProc = ourproc();
+    uint64_t selfTask = selfProc ? taskbyproc(selfProc) : 0;
+    [self log:@"lara(前台) proc=0x%llx task=0x%llx", selfProc, selfTask];
+
+    uint64_t gameProc = procbyname("sc");
+    if (!gameProc) { [self log:@"进程 'sc' 不存在 —— 把游戏打开再试"]; return; }
+    uint64_t gameTask = taskbyproc(gameProc);
+    [self log:@"sc(后台)   proc=0x%llx task=0x%llx", gameProc, gameTask];
+
+    if (!selfTask || !gameTask) { [self log:@"task 地址拿不到"]; return; }
+
+    [self log:@"--- 候选字段（值 <= 16 且两者不同）---"];
+    int hits = 0;
+    for (uint32_t off = 0; off < 0x400; off += 4) {
+        uint32_t a = ds_kread32(selfTask + off);
+        uint32_t b = ds_kread32(gameTask + off);
+        if (a > 16 || b > 16) continue;
+        if (a == b) continue;
+        [self log:@"  +0x%03x   lara=%u   sc=%u", off, a, b];
+        hits++;
+    }
+    [self log:@"--- 共 %d 个候选 ---", hits];
+    [self log:@"差值为 1 的那个最可能是 suspend_count"];
+    [self log:@"==============================="];
+}
+
 #pragma mark - PAC 诊断
 
 /// 线程注入失败（Remote call faulted at getpid entry pc=0x201）的直接原因排查：

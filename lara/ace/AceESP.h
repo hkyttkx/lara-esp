@@ -71,6 +71,8 @@ typedef struct {
 - (void)diagnosePACAsync;
 /// 注入对照：连接 lara 自己（前台活跃进程）
 - (void)testInjectSelfAsync;
+/// 挂起状态诊断：对比前台/后台进程的 task 结构，定位 suspend_count
+- (void)diagnoseSuspendAsync;
 
 @end
 

@@ -137,6 +137,20 @@ struct AceESPView: View {
                     }
                     .disabled(busy)
 
+                    Button {
+                        AceESP.shared().diagnoseSuspendAsync()
+                    } label: {
+                        HStack {
+                            Image(systemName: "pause.circle")
+                            Text("⑥ 挂起诊断（找 suspend_count）")
+                            Spacer()
+                        }
+                        .padding(.vertical, 11).padding(.horizontal, 14)
+                        .background(Color.pink.opacity(0.15))
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                    }
+                    .disabled(busy)
+
                     // ---- 绘制 ----
                     sectionTitle("绘制")
                     Button {
